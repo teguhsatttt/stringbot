@@ -1,0 +1,45 @@
+{
+  "telegram": {
+    "api_id": 1234567,
+    "api_hash": "YOUR_API_HASH",
+    "session": "data/usher.session",
+    "string_session": "",
+    "prefer_string_session": true
+  },
+  "admin": {
+    "admin_ids": [
+      111111111
+    ]
+  },
+  "bot_target": {
+    "username": "YourBot",
+    "commands": {
+      "v1": "/addv1",
+      "v2": "/addv2",
+      "v3": "/addv3"
+    }
+  },
+  "behavior": {
+    "combo_addv_plus_link": true,
+    "combo_order": "relay_first",
+    "wait_bot_reply_sec": 4,
+    "dedupe_cache_sec": 60,
+    "notify_admin_on_relay": false,
+    "silent_dm_to_user": true
+  },
+  "vip_invite": {
+    "map": {
+      "linkv1": -1001111111111,
+      "linkv2": -1002222222222,
+      "linkv3": -1003333333333
+    },
+    "ttl_sec": 3600,
+    "limit": 1,
+    "template": "Akses {tier} aktif.\nLink (berlaku 1 jam, 1x pakai): {link}"
+  },
+  "storage": {
+    "notes": "data/notes.json",
+    "invite_log": "data/invite_audit.jsonl"
+  },
+  "timezone": "Asia/Jakarta"
+}
