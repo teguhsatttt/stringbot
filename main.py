@@ -248,7 +248,7 @@ async def admin_handler(event: events.NewMessage.Event):
     text_raw = event.raw_text.strip()
     text = text_raw.lower()
 
-    if text.startswith(("/linkv1", "/linkv2", "/linkv3")):
+    if text.startswith((".linkv1", ".linkv2", ".linkv3")):
         link_cmd = text.split()[0].lstrip("/")
         target = await get_target_user_from_context(event)
         if not target:
