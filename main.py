@@ -459,7 +459,7 @@ async def main():
         await interactive_login_and_persist_string()
     else:
         await client.connect()
-    log.info("Usher started: addv relay + join-request link, manual /linkv1/2/3, notes.")
+    log.info("UsherBot started !!!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
