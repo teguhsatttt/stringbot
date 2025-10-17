@@ -1,27 +1,20 @@
 import os, json, time, asyncio, logging, shutil
-from typing import Optional, Dict, Tuple
+from typing import Optional
 from datetime import datetime, timezone
 from telethon import TelegramClient, events, functions
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 
-# ============ Logging ============
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("usher_remote")
-logging.getLogger("telethon").setLevel(logging.WARNING)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("usher")
 
-# ============ Config ============
 CFG_PATH = "config.json"
 
 def load_cfg():
     with open(CFG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def save_cfg(cfg):
+def save_cfg(cfg: dict):
     tmp = CFG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -29,7 +22,6 @@ def save_cfg(cfg):
 
 CFG = load_cfg()
 
-# Versi awal config.json
 API_ID = int(CFG["telegram"]["api_id"])
 API_HASH = CFG["telegram"]["api_hash"]
 SESSION_FILE = CFG["telegram"]["session"]
@@ -62,27 +54,19 @@ STO = CFG["storage"]
 NOTES_PATH = STO["notes"]
 INVITE_LOG = STO["invite_log"]
 
-# ============ Ensure dirs ============
 os.makedirs("data", exist_ok=True)
 os.makedirs(os.path.dirname(NOTES_PATH), exist_ok=True)
 os.makedirs(os.path.dirname(INVITE_LOG), exist_ok=True)
 
-# ============ Client ============
 def make_client() -> TelegramClient:
     if PREFER_STRING:
         if STRING_SESSION:
-            log.info("Login dengan StringSession dari config.json")
             return TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-        else:
-            log.info("StringSession kosong. Akan generate interaktif.")
-            return TelegramClient(StringSession(), API_ID, API_HASH)
-    else:
-        log.info("Login dengan FileSession: %s", SESSION_FILE)
-        return TelegramClient(SESSION_FILE, API_ID, API_HASH)
+        return TelegramClient(StringSession(), API_ID, API_HASH)
+    return TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
 client = make_client()
 
-# ============ Utils & Log ============
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -91,14 +75,11 @@ def log_action(action: str, data: dict):
     rec.update(data)
     with open(INVITE_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    # ringkas di terminal
     log.info("%s | %s", action, data)
 
 def preview_text(s: str, limit: int) -> str:
     s = (s or "").strip().replace("\r", " ").replace("\n", " ")
-    if len(s) <= limit:
-        return s
-    return s[:limit - 1].rstrip() + "…"
+    return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
 
 def sanitize_title(title: str) -> str:
     return title.strip().lower()
@@ -120,10 +101,6 @@ def save_notes(notes: dict):
         json.dump(notes, f, ensure_ascii=False, indent=2)
 
 def extract_int_token(tok: str) -> Optional[int]:
-    """
-    Ambil digit saja dari tok. '(123)', '{123}', 'ID:123' -> 123.
-    Kalau hasilnya kosong, return None.
-    """
     if not tok:
         return None
     digits = "".join(ch for ch in tok if ch.isdigit())
@@ -134,17 +111,13 @@ def extract_int_token(tok: str) -> Optional[int]:
     except Exception:
         return None
 
-# ============ Login interaktif ============
 async def interactive_login_and_persist_string():
     await client.connect()
     if await client.is_user_authorized():
         s = client.session.save()
         CFG["telegram"]["string_session"] = s
         save_cfg(CFG)
-        print("\n=== STRING SESSION (SIMPAN DENGAN AMAN) ===")
-        print(s)
-        print("=== END STRING SESSION ===\n")
-        log.info("String session tersimpan ke config.json")
+        print("\n=== STRING SESSION ===\n" + s + "\n======================\n")
         return
     phone = os.getenv("USHER_PHONE") or input("Masukkan nomor HP (+62xxxx): ").strip()
     await client.send_code_request(phone)
@@ -157,21 +130,13 @@ async def interactive_login_and_persist_string():
     s = client.session.save()
     CFG["telegram"]["string_session"] = s
     save_cfg(CFG)
-    print("\n=== STRING SESSION (SIMPAN DENGAN AMAN) ===")
-    print(s)
-    print("=== END STRING SESSION ===\n")
-    log.info("String session tersimpan ke config.json")
+    print("\n=== STRING SESSION ===\n" + s + "\n======================\n")
 
-# ============ Invite helpers ============
 def addv_to_link_cmd(addv_cmd: str) -> str:
-    # '/addv1' -> 'addv1' -> 'linkv1'
     base = addv_cmd.lstrip("/")
     return "link" + base[-2:]
 
-async def create_invite(link_cmd: str) -> Optional[str]:
-    """
-    link_cmd: 'vip1'|'vip2'|'vip3'
-    """
+async def create_invite(link_cmd: str, require_approval: bool = False) -> Optional[str]:
     peer_cfg = VIP_MAP.get(link_cmd)
     if not peer_cfg:
         log_action("invite_error", {"tier": link_cmd, "err": "peer_not_configured"})
@@ -179,16 +144,25 @@ async def create_invite(link_cmd: str) -> Optional[str]:
     try:
         entity = await client.get_entity(peer_cfg)
         expire = int(time.time()) + TTL
-        res = await client(functions.messages.ExportChatInviteRequest(
+
+        kwargs = dict(
             peer=entity,
             expire_date=expire,
-            usage_limit=LIMIT
-        ))
-        # Ambil link dari berbagai bentuk response
+            request_needed=require_approval
+        )
+        if not require_approval:
+            kwargs["usage_limit"] = LIMIT
+
+        res = await client(functions.messages.ExportChatInviteRequest(**kwargs))
+
         link = getattr(res, "link", None)
         if not link and hasattr(res, "exported_invite"):
             link = getattr(res.exported_invite, "link", None)
+        if not link:
+            log_action("invite_error", {"tier": link_cmd, "peer": str(peer_cfg), "err": "no_link_returned"})
+            return None
         return link
+
     except Exception as e:
         log_action("invite_error", {"tier": link_cmd, "peer": str(peer_cfg), "err": str(e)})
         return None
@@ -196,11 +170,7 @@ async def create_invite(link_cmd: str) -> Optional[str]:
 async def revoke_invite(peer_key: str, link: str):
     try:
         entity = await client.get_entity(VIP_MAP[peer_key])
-        await client(functions.messages.EditExportedChatInviteRequest(
-            peer=entity,
-            link=link,
-            revoked=True
-        ))
+        await client(functions.messages.EditExportedChatInviteRequest(peer=entity, link=link, revoked=True))
         log_action("invite_revoked", {"tier": peer_key, "link": link})
     except Exception as e:
         log_action("revoke_err", {"tier": peer_key, "err": str(e)})
@@ -209,39 +179,31 @@ async def send_invite_to_user(user_id: int, tier_cmd: str, link: str):
     msg = INVITE_TPL.format(tier=tier_cmd.upper(), link=link)
     await client.send_message(user_id, msg, silent=SILENT_DM)
 
-# ============ Parsing helpers ============
 async def get_target_user_from_context(event: events.NewMessage.Event) -> Optional[int]:
-    # Prioritas: reply
     if event.is_reply:
         r = await event.get_reply_message()
         if r and r.sender_id and not r.is_channel:
             return r.sender_id
-
-    # Fallback: argumen pertama
     parts = event.raw_text.strip().split()
     if len(parts) >= 2:
         tok = parts[1].strip()
-
-        # @username
         if tok.startswith("@"):
             try:
                 ent = await client.get_entity(tok)
                 return getattr(ent, "id", None)
             except Exception:
                 return None
-
-        # Angka dengan noise
         num = extract_int_token(tok)
         if num is not None:
             return num
-
     return None
 
+def clip_req(n: int) -> int:
+    if n < ADDV_MIN: return ADDV_MIN
+    if n > ADDV_MAX: return ADDV_MAX
+    return n
+
 def parse_req_no_or_none(text_raw: str, consumed_first_arg: bool) -> Optional[int]:
-    """
-    Cari angka pertama SETELAH user_id. Terima format noisy: '(3)', '{3}', 'req:3'.
-    Jika tidak ada angka -> None.
-    """
     parts = text_raw.strip().split()
     args = parts[1:] if len(parts) > 1 else []
     start = 1 if consumed_first_arg else 0
@@ -252,16 +214,9 @@ def parse_req_no_or_none(text_raw: str, consumed_first_arg: bool) -> Optional[in
             continue
         num = extract_int_token(tok)
         if num is not None:
-            # clip ke batas 1..10 dari config
-            if num < ADDV_MIN: num = ADDV_MIN
-            if num > ADDV_MAX: num = ADDV_MAX
-            return num
+            return clip_req(num)
         start += 1
     return None
-
-# ============ Notes helpers ============
-def notes_dir_for(title: str) -> str:
-    return notes_media_dir(title)
 
 async def capture_note_from_reply(event, title: str, caption_override: Optional[str]) -> Optional[dict]:
     r = await event.get_reply_message()
@@ -270,41 +225,36 @@ async def capture_note_from_reply(event, title: str, caption_override: Optional[
     media = None
     media_type = None
     caption_text = (caption_override or r.message or "").strip()
-
     if r.photo:
         media = r.photo; media_type = "photo"
     elif r.document and not r.video:
         media = r.document; media_type = "document"
     elif r.video:
         media = r.video; media_type = "video"
-
     if media:
-        d = notes_dir_for(title)
+        d = notes_media_dir(title)
         if os.path.exists(d):
             shutil.rmtree(d)
         os.makedirs(d, exist_ok=True)
         path = await client.download_media(media, file=d)
         size = os.path.getsize(path) if os.path.exists(path) else None
         return {"type": media_type, "text": caption_text, "media": {"path": path, "size": size}}
-
     if caption_text:
         return {"type": "text", "text": caption_text}
     return None
 
-# ============ Handlers ============
 @client.on(events.NewMessage(from_users=list(ADMIN_IDS)))
 async def admin_handler(event: events.NewMessage.Event):
     text_raw = event.raw_text.strip()
     text = text_raw.lower()
 
-    # --- manual link commands   ---
     if text.startswith(("/linkv1", "/linkv2", "/linkv3")):
         link_cmd = text.split()[0].lstrip("/")
         target = await get_target_user_from_context(event)
         if not target:
             log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
             return
-        link = await create_invite(link_cmd)
+        link = await create_invite(link_cmd, True)
         if not link:
             log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
             return
@@ -312,11 +262,8 @@ async def admin_handler(event: events.NewMessage.Event):
         log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
         return
 
-    # ---- /addv1|/addv2|/addv3 ----
     if text.startswith(("/addv1", "/addv2", "/addv3")):
-        cmd_token = text.split()[0]  # '/addvX'
-
-        # Resolve target
+        cmd_token = text.split()[0]
         target = await get_target_user_from_context(event)
         consumed_first_arg = False
         if not event.is_reply:
@@ -328,43 +275,41 @@ async def admin_handler(event: events.NewMessage.Event):
         if not target:
             log_action("ignored_addv", {"reason": "no_target", "tier": cmd_token.lstrip("/"), "raw": text_raw})
             return
-
-        # Ambil request_no (opsional)
         req_no = parse_req_no_or_none(text_raw, consumed_first_arg)
-
-        # Relay ke bot utama
         tier_key = f"v{cmd_token[-1]}"
         relay_cmd = CMD_MAP.get(tier_key, cmd_token)
         payload = f"{relay_cmd} {target}" if req_no is None else f"{relay_cmd} {target} {req_no}"
         await client.send_message(BOT_USERNAME, payload)
-        log_payload = {"tier": tier_key, "target": target, "to": BOT_USERNAME}
-        if req_no is not None: log_payload["req_no"] = req_no
-        log_action("relay_addv", log_payload)
+        lp = {"tier": tier_key, "target": target, "to": BOT_USERNAME}
+        if req_no is not None: lp["req_no"] = req_no
+        log_action("relay_addv", lp)
 
-        # Combo: delay 5 detik, buat link, DM user
         if COMBO_ON:
+            link_cmd = addv_to_link_cmd(cmd_token)
             async def make_and_send():
                 try:
-                    await asyncio.sleep(5)  # hard delay
-                    link_cmd = addv_to_link_cmd(cmd_token)
-                    cache_key = (link_cmd, target)
-                    now_ts = time.time()       
-                    link = await create_invite(link_cmd)
+                    if WAIT_BOT_REPLY > 0:
+                        try:
+                            bot = await client.get_entity(BOT_USERNAME)
+                            await client.wait_for(events.NewMessage(from_users=bot.id), timeout=WAIT_BOT_REPLY)
+                        except Exception:
+                            pass
+                    await asyncio.sleep(5)
+                    link = await create_invite(link_cmd, True)
                     if not link:
-                        raise RuntimeError("Gagal membuat invite link")
+                        raise RuntimeError("create_invite_failed")
                     await send_invite_to_user(target, link_cmd, link)
                     inv_log = {"tier": link_cmd, "target": target, "link": link, "status": "pending"}
                     if req_no is not None: inv_log["req_no"] = req_no
                     log_action("invite_sent", inv_log)
                 except Exception as e:
-                    log_action("invite_dm_failed", {"tier": cmd_token, "target": target, "err": str(e)})
+                    log_action("invite_dm_failed", {"tier": link_cmd, "target": target, "err": str(e)})
             if COMBO_ORDER == "relay_first":
                 await make_and_send()
             else:
                 asyncio.create_task(make_and_send())
         return
 
-    # ---- Notes: /savenote ----
     if text.startswith("/savenote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2:
@@ -379,7 +324,6 @@ async def admin_handler(event: events.NewMessage.Event):
         if not title_key:
             await event.reply("Format: reply konten atau /savenote <judul> | <teks>")
             return
-
         note = None
         if event.is_reply:
             note = await capture_note_from_reply(event, title_key, cap)
@@ -388,15 +332,13 @@ async def admin_handler(event: events.NewMessage.Event):
         if not note:
             await event.reply("Pesan tidak mengandung konten yang bisa disimpan.")
             return
-
         notes = load_notes()
         notes[title_key] = note
         save_notes(notes)
         log_action("note_saved", {"title": title_key, "type": note["type"]})
         await event.reply(f"Note '{title_key}' disimpan.")
-        return 
-        
-    # ---- Notes: /delnote ----
+        return
+
     if text.startswith("/delnote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2:
@@ -416,7 +358,6 @@ async def admin_handler(event: events.NewMessage.Event):
             await event.reply("Note tidak ditemukan.")
         return
 
-    # ---- Notes: /listnote ----
     if text.startswith("/listnote"):
         notes = load_notes()
         if not notes:
@@ -434,12 +375,13 @@ async def admin_handler(event: events.NewMessage.Event):
         lines = ["Daftar note:"]
         shown = 0
         for idx, title in enumerate(titles, start=1):
-            if shown >= limit: break
+            if shown >= limit:
+                break
             n = notes.get(title) or {}
             body = n.get("text", "") or ""
             prev = preview_text(body, NOTES_PREVIEW_LEN)
             lines.append(f"{idx}. {title}")
-            lines.append(f" - {prev or '(kosong)'}")
+            lines.append(f"   > {prev or '(kosong)'}")
             shown += 1
         if shown < len(titles):
             lines.append(f"(ditampilkan {shown} dari {len(titles)})")
@@ -447,7 +389,6 @@ async def admin_handler(event: events.NewMessage.Event):
         log_action("note_list", {"count": len(notes), "shown": shown})
         return
 
-    # ---- Notes: /getnote ----
     if text.startswith("/getnote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2:
@@ -459,14 +400,12 @@ async def admin_handler(event: events.NewMessage.Event):
         if not note:
             await event.reply("Note tidak ditemukan.")
             return
-
         target_id = None
         if event.is_reply:
             r = await event.get_reply_message()
             target_id = r.sender_id if r else event.chat_id
         else:
             target_id = event.chat_id
-
         try:
             if note["type"] == "text":
                 await client.send_message(target_id, note.get("text", "") or "")
@@ -474,12 +413,7 @@ async def admin_handler(event: events.NewMessage.Event):
                 media = note.get("media") or {}
                 path = media.get("path")
                 if path and os.path.exists(path):
-                    await client.send_file(
-                        target_id,
-                        path,
-                        caption=note.get("text", "") or "",
-                        force_document=(note["type"] == "document")
-                    )
+                    await client.send_file(target_id, path, caption=note.get("text", "") or "", force_document=(note["type"] == "document"))
                 else:
                     await client.send_message(target_id, note.get("text", "") or "")
             log_action("note_get_sent", {"title": title_key, "type": note["type"], "target": target_id})
@@ -487,48 +421,45 @@ async def admin_handler(event: events.NewMessage.Event):
             log_action("note_get_send_error", {"title": title_key, "err": str(e)})
         return
 
-# ============ Join enforcement (single-use) ============
 @client.on(events.ChatAction)
 async def on_chat_action(event: events.ChatAction.Event):
     if not (event.user_joined or event.user_added):
         return
     user = await event.get_user()
     user_id = user.id
-
     if not os.path.exists(INVITE_LOG):
         return
-
-    # Cari invite_sent terbaru untuk target = user_id
-    link = None; tier = None
+    link = None
+    tier = None
     try:
         with open(INVITE_LOG, "r", encoding="utf-8") as f:
             lines = f.readlines()
         for line in reversed(lines):
             d = json.loads(line)
             if d.get("action") == "invite_sent" and int(d.get("target", 0)) == user_id:
-                link = d.get("link"); tier = d.get("tier")
+                link = d.get("link")
+                tier = d.get("tier")
+                break
+            if d.get("action") == "invite_sent_manual" and int(d.get("target", 0)) == user_id:
+                link = d.get("link")
+                tier = d.get("tier")
                 break
     except Exception:
         return
-
     if not link or not tier:
         return
-
-    # Revoke untuk target yang benar
     try:
         await revoke_invite(tier, link)
         log_action("invite_consumed", {"tier": tier, "target": user_id, "link": link})
     except Exception as e:
-        log_action("invite_consume_err", {"tier": tier, "target": user_id, "err": str(e)})
+        log_action("invite_consumed_err", {"tier": tier, "target": user_id, "err": str(e)})
 
-# ============ Main ============
 async def main():
-    # First-run: generate string session kalau kosong
     if PREFER_STRING and not STRING_SESSION:
         await interactive_login_and_persist_string()
     else:
         await client.connect()
-    log.info("Usher Remote started !!! ")
+    log.info("Usher started: addv relay + join-request link, manual /linkv1/2/3, notes.")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
