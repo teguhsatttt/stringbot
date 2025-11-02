@@ -33,9 +33,9 @@
       "linkv2": -1002222222222,
       "linkv3": -1003333333333
     },
-    "ttl_sec": 3600,
+    "ttl_sec": 86400,
     "limit": 1,
-    "template": "Akses {tier} aktif.\nLink (berlaku 1 jam, 1x pakai): {link}"
+    "template": "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}"
   },
   "storage": {
     "notes": "data/notes.json",
