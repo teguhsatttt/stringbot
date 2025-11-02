@@ -46,9 +46,9 @@ ADDV_MAX = int(BEHAV.get("addv_req_max", 10))
 
 VIP = CFG["vip_invite"]
 VIP_MAP = VIP["map"]
-TTL = int(VIP.get("ttl_sec", 3600))
+TTL = int(VIP.get("ttl_sec", 86400))
 LIMIT = int(VIP.get("limit", 1))
-INVITE_TPL = VIP.get("template", "Akses {tier} aktif.\nLink (berlaku 1 jam, 1x pakai): {link}")
+INVITE_TPL = VIP.get("template", "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}")
 
 STO = CFG["storage"]
 NOTES_PATH = STO["notes"]
