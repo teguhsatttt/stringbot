@@ -257,25 +257,24 @@ async def admin_handler(event: events.NewMessage.Event):
     text_raw = event.raw_text.strip()
     text = text_raw.lower()
 
- if text_raw.strip().startswith((".linkv1", ".linkv2", ".linkv3", ".linkv4", ".linkv5", ".linkv6")):
-    link_cmd = text_raw.strip().split()[0].lstrip("/.!").lower()
-    target = await get_target_user_from_context(event)
+  if text_raw.strip().startswith((".linkv1", ".linkv2", ".linkv3", ".linkv4", ".linkv5", ".linkv6")):
+      link_cmd = text_raw.strip().split()[0].lstrip("/.!").lower()
+      target = await get_target_user_from_context(event)
 
-    if not target:
-        log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
-        return
+      if not target:
+          log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
+          return
 
-    link = await create_invite(link_cmd, True)
-    if not link:
-        log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
-        return
+      link = await create_invite(link_cmd, True)
+      if not link:
+          log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
+          return
 
-    await send_invite_to_user(target, link_cmd, link)
-    log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
-    ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
-    return
-
-
+      await send_invite_to_user(target, link_cmd, link)
+      log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
+      ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
+      return
+      
     if text.startswith(("/addv1", "/addv2", "/addv3")):
         cmd_token = text.split()[0]
         target = await get_target_user_from_context(event)
