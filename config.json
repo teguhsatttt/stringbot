@@ -27,16 +27,19 @@
     "notify_admin_on_relay": false,
     "silent_dm_to_user": true
   },
-  "vip_invite": {
-    "map": {
-      "linkv1": -1001111111111,
-      "linkv2": -1002222222222,
-      "linkv3": -1003333333333
-    },
-    "ttl_sec": 86400,
-    "limit": 1,
-    "template": "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}"
+  ,"vip_invite": {
+  "map": {
+    "linkv1": "-1003021502159",
+    "linkv2": "-1001234567890",
+    "linkv3": "-1009876543210",
+    "linkv4": "-1001112223334",
+    "linkv5": "-1005556667778",
+    "linkv6": "-1008889990001"
   },
+  "ttl_sec": 86400,
+  "limit": 1,
+  "template": "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}"
+},
   "storage": {
     "notes": "data/notes.json",
     "invite_log": "data/invite_audit.jsonl"
