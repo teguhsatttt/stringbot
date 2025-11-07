@@ -136,20 +136,21 @@ def addv_to_link_cmd(addv_cmd: str) -> str:
     base = addv_cmd.lstrip("/")
     return "link" + base[-2:]
 
-async def create_invite(link_cmd: str, require_approval: bool = False) -> Optional[str]:
+async def create_invite(link_cmd: str, require_approval: bool = True) -> Optional[str]:
     peer_cfg = VIP_MAP.get(link_cmd)
     if not peer_cfg:
         log_action("invite_error", {"tier": link_cmd, "err": "peer_not_configured"})
         return None
     try:
-        entity = await client.get_entity(peer_cfg)
+        peer_id = int(str(peer_cfg).strip())
         expire = int(time.time()) + TTL
 
         kwargs = dict(
-            peer=entity,
+            peer=peer_id,
             expire_date=expire,
             request_needed=require_approval
         )
+        # Telegram TIDAK mengizinkan usage_limit saat request_needed=True.
         if not require_approval:
             kwargs["usage_limit"] = LIMIT
 
@@ -175,8 +176,16 @@ async def revoke_invite(peer_key: str, link: str):
     except Exception as e:
         log_action("revoke_err", {"tier": peer_key, "err": str(e)})
 
-async def send_invite_to_user(user_id: int, tier_cmd: str, link: str):
-    msg = INVITE_TPL.format(tier=tier_cmd.upper(), link=link)
+async def send_invite_to_user(user_id: int, tier: str, link: str):
+    t = (tier or "").lower()
+    if t.startswith("linkv"):
+        n = t.replace("linkv", "")
+    elif t.startswith("v"):
+        n = t[1:]
+    else:
+        n = ""
+    tier_label = f"VIP{n}" if n.isdigit() else "VIP"
+    msg = INVITE_TPL.format(tier=tier_label, link=link)
     await client.send_message(user_id, msg, silent=SILENT_DM)
 
 async def get_target_user_from_context(event: events.NewMessage.Event) -> Optional[int]:
@@ -248,19 +257,20 @@ async def admin_handler(event: events.NewMessage.Event):
     text_raw = event.raw_text.strip()
     text = text_raw.lower()
 
-    if text_raw.strip().lower().startswith((".linkv1", ".linkv2", ".linkv3")):
-        link_cmd = text_raw.strip().split()[0].lstrip("/.!").lower()
-        target = await get_target_user_from_context(event)
-        if not target:
-            log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
-            return
-        link = await create_invite(link_cmd, True)
-        if not link:
-            log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
-            return
-        await send_invite_to_user(target, link_cmd, link)
-        log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
+    if text_raw.strip().lower().startswith((".linkv1", ".linkv2", ".linkv3", ".linkv4", ".linkv5", ".linkv6")):
+    link_cmd = text_raw.strip().split()[0].lstrip("/.!").lower()
+    target = await get_target_user_from_context(event)
+    if not target:
+        log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
         return
+    link = await create_invite(link_cmd, True)
+    if not link:
+        log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
+        return
+    await send_invite_to_user(target, link_cmd, link)
+    log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
+    ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}  # <- tambahkan ini
+    return
 
     if text.startswith(("/addv1", "/addv2", "/addv3")):
         cmd_token = text.split()[0]
@@ -425,34 +435,41 @@ async def admin_handler(event: events.NewMessage.Event):
 async def on_chat_action(event: events.ChatAction.Event):
     if not (event.user_joined or event.user_added):
         return
-    user = await event.get_user()
-    user_id = user.id
-    if not os.path.exists(INVITE_LOG):
-        return
-    link = None
-    tier = None
+
     try:
-        with open(INVITE_LOG, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        for line in reversed(lines):
-            d = json.loads(line)
-            if d.get("action") == "invite_sent" and int(d.get("target", 0)) == user_id:
-                link = d.get("link")
-                tier = d.get("tier")
-                break
-            if d.get("action") == "invite_sent_manual" and int(d.get("target", 0)) == user_id:
-                link = d.get("link")
-                tier = d.get("tier")
-                break
+        user = await event.get_user()
+        uid = user.id
     except Exception:
         return
-    if not link or not tier:
+
+    rec = ACTIVE_INVITES.pop(uid, None)
+    if rec:
+        try:
+            await revoke_invite(rec["tier"], rec["link"])
+            log_action("invite_consumed", {"tier": rec["tier"], "target": uid, "link": rec["link"]})
+        except Exception as e:
+            log_action("invite_consume_err", {"tier": rec["tier"], "target": uid, "err": str(e)})
         return
+
     try:
-        await revoke_invite(tier, link)
-        log_action("invite_consumed", {"tier": tier, "target": user_id, "link": link})
-    except Exception as e:
-        log_action("invite_consumed_err", {"tier": tier, "target": user_id, "err": str(e)})
+        if not os.path.exists(INVITE_LOG):
+            return
+        with open(INVITE_LOG, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        link = None; tier = None
+        for line in reversed(lines):
+            d = json.loads(line)
+            if d.get("action") in ("invite_sent", "invite_sent_manual") and int(d.get("target", 0)) == uid:
+                link = d.get("link"); tier = d.get("tier")
+                break
+        if link and tier:
+            try:
+                await revoke_invite(tier, link)
+                log_action("invite_consumed", {"tier": tier, "target": uid, "link": link})
+            except Exception as e:
+                log_action("invite_consume_err", {"tier": tier, "target": uid, "err": str(e)})
+    except Exception:
+        pass
 
 async def main():
     if PREFER_STRING and not STRING_SESSION:
