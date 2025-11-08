@@ -454,7 +454,7 @@ async def admin_handler(event: events.NewMessage.Event):
                 asyncio.create_task(make_and_send())
         return
 
-    if text.startswith("/savenote"):
+    if text.startswith(".savenote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2 and not event.is_reply:
             await event.reply("Format: reply konten atau /savenote <judul> | <isi>")
@@ -480,7 +480,7 @@ async def admin_handler(event: events.NewMessage.Event):
         await event.reply(f"Note '{title_key}' disimpan.")
         return
 
-    if text.startswith("/delnote"):
+    if text.startswith(".delnote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2:
             await event.reply("Gunakan: /delnote <judul>")
@@ -499,7 +499,7 @@ async def admin_handler(event: events.NewMessage.Event):
             await event.reply("Note tidak ditemukan.")
         return
 
-    if text.startswith("/listnote"):
+    if text.startswith(".listnote"):
         notes = load_notes()
         if not notes:
             await event.reply("Tidak ada note tersimpan.")
@@ -530,7 +530,7 @@ async def admin_handler(event: events.NewMessage.Event):
         log_action("note_list", {"count": len(notes), "shown": shown})
         return
 
-    if text.startswith("/getnote"):
+    if text.startswith(".getnote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2:
             await event.reply("Gunakan: /getnote <judul>")
@@ -560,7 +560,7 @@ async def admin_handler(event: events.NewMessage.Event):
             log_action("note_get_send_error", {"title": title_key, "err": str(e)})
         return
 
-    if text.startswith("/help"):
+    if text.startswith(".help"):
         help_text = (
             "Panduan Perintah Usher Bot\n\n"
             "ADD (relay ke Bot Utama):\n"
@@ -578,10 +578,10 @@ async def admin_handler(event: events.NewMessage.Event):
             "  .linkv5  [reply user]\n"
             "  .linkv6  [reply user]\n\n"
             "NOTES:\n"
-            "  /savenote <judul> | <isi>    atau reply konten lalu: /savenote <judul>\n"
-            "  /delnote <judul>\n"
-            "  /listnote [maks_item]\n"
-            "  /getnote <judul>\n"
+            "  .savenote <judul> | <isi>    atau reply konten lalu: /savenote <judul>\n"
+            "  .delnote <judul>\n"
+            "  .listnote [maks_item]\n"
+            "  .getnote <judul>\n"
         )
         await event.reply(help_text)
         log_action("show_help", {"from": event.sender_id})
