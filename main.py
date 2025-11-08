@@ -6,24 +6,29 @@ import logging
 import shutil
 from typing import Optional
 from datetime import datetime, timezone
+
 from telethon import TelegramClient, events, functions
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
+from telethon.tl import types
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("usher")
 
 CFG_PATH = "config.json"
 
+
 def load_cfg() -> dict:
     with open(CFG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def save_cfg(cfg: dict):
     tmp = CFG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CFG_PATH)
+
 
 CFG = load_cfg()
 
@@ -61,6 +66,7 @@ os.makedirs("data", exist_ok=True)
 os.makedirs(os.path.dirname(NOTES_PATH), exist_ok=True)
 os.makedirs(os.path.dirname(INVITE_LOG), exist_ok=True)
 
+
 def make_client() -> TelegramClient:
     if PREFER_STRING:
         if STRING_SESSION:
@@ -68,13 +74,18 @@ def make_client() -> TelegramClient:
         return TelegramClient(StringSession(), API_ID, API_HASH)
     return TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
+
 client = make_client()
 
 ACTIVE_INVITES = {}
 ACTIVE_INVITES_BY_CHAT = {}
+INVITE_WATCHERS = {}
+WATCH_INTERVAL = 2
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
 
 def log_action(action: str, data: dict):
     rec = {"time": now_iso(), "action": action}
@@ -83,15 +94,19 @@ def log_action(action: str, data: dict):
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     log.info("%s | %s", action, json.dumps(data, ensure_ascii=False))
 
+
 def preview_text(s: str, limit: int) -> str:
     s = (s or "").strip().replace("\r", " ").replace("\n", " ")
     return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
 
+
 def sanitize_title(title: str) -> str:
     return title.strip().lower()
 
+
 def notes_media_dir(title: str) -> str:
     return os.path.join("data", "notes_media", title)
+
 
 def load_notes() -> dict:
     if not os.path.exists(NOTES_PATH):
@@ -102,9 +117,11 @@ def load_notes() -> dict:
     except Exception:
         return {}
 
+
 def save_notes(notes: dict):
     with open(NOTES_PATH, "w", encoding="utf-8") as f:
         json.dump(notes, f, ensure_ascii=False, indent=2)
+
 
 def extract_int_token(tok: str) -> Optional[int]:
     if not tok:
@@ -117,6 +134,7 @@ def extract_int_token(tok: str) -> Optional[int]:
     except Exception:
         return None
 
+
 def clip_req(n: int) -> int:
     if n < ADDV_MIN:
         return ADDV_MIN
@@ -124,9 +142,11 @@ def clip_req(n: int) -> int:
         return ADDV_MAX
     return n
 
+
 def addv_to_link_cmd(addv_cmd: str) -> str:
     base = addv_cmd.lstrip("/")
     return "link" + base[-2:]
+
 
 async def get_target_user_from_context(event: events.NewMessage.Event) -> Optional[int]:
     if event.is_reply:
@@ -147,6 +167,7 @@ async def get_target_user_from_context(event: events.NewMessage.Event) -> Option
             return num
     return None
 
+
 def parse_req_no_or_none(text_raw: str, consumed_first_arg: bool) -> Optional[int]:
     parts = text_raw.strip().split()
     args = parts[1:] if len(parts) > 1 else []
@@ -161,6 +182,7 @@ def parse_req_no_or_none(text_raw: str, consumed_first_arg: bool) -> Optional[in
             return clip_req(num)
         start += 1
     return None
+
 
 async def interactive_login_and_persist_string():
     await client.connect()
@@ -183,6 +205,7 @@ async def interactive_login_and_persist_string():
     save_cfg(CFG)
     print("\n=== STRING SESSION ===\n" + s + "\n======================\n")
 
+
 async def ensure_entity_cached(peer_id: int):
     try:
         await client.get_entity(peer_id)
@@ -192,11 +215,13 @@ async def ensure_entity_cached(peer_id: int):
         except Exception as e:
             log_action("entity_cache_error", {"peer": peer_id, "err": str(e)})
 
+
 def tier_peer_id(tier_key: str) -> Optional[int]:
     try:
         return int(str(VIP_MAP[tier_key]).strip())
     except Exception:
         return None
+
 
 async def create_invite(link_cmd: str, require_approval: bool = True) -> Optional[str]:
     peer_cfg = VIP_MAP.get(link_cmd)
@@ -222,6 +247,7 @@ async def create_invite(link_cmd: str, require_approval: bool = True) -> Optiona
         log_action("invite_error", {"tier": link_cmd, "peer": str(peer_cfg), "err": str(e)})
         return None
 
+
 async def revoke_invite(peer_key: str, link: str):
     try:
         peer_id = int(str(VIP_MAP[peer_key]).strip())
@@ -229,6 +255,54 @@ async def revoke_invite(peer_key: str, link: str):
         log_action("invite_revoked", {"tier": peer_key, "link": link})
     except Exception as e:
         log_action("revoke_err", {"tier": peer_key, "err": str(e)})
+
+
+async def decline_all_pending(peer_id: int, link: str):
+    try:
+        await client(functions.messages.HideAllChatJoinRequests(peer=peer_id, link=link, approved=False))
+        log_action("pending_declined", {"peer": peer_id, "link": link})
+    except Exception as e:
+        log_action("pending_decline_err", {"peer": peer_id, "link": link, "err": str(e)})
+
+
+async def get_request_count(peer_id: int, link: str) -> int:
+    try:
+        res = await client(functions.messages.GetChatInviteImportersRequest(
+            peer=peer_id,
+            link=link,
+            offset_date=0,
+            offset_user=types.InputUserEmpty(),
+            limit=1,
+            requested=True
+        ))
+        return getattr(res, "count", 0) or 0
+    except Exception as e:
+        log_action("importers_err", {"peer": peer_id, "link": link, "err": str(e)})
+        return 0
+
+
+async def watch_and_revoke_on_first_request(tier_key: str, peer_id: int, link: str, target_id: Optional[int]):
+    key = (peer_id, link)
+    if key in INVITE_WATCHERS:
+        return
+    INVITE_WATCHERS[key] = True
+    try:
+        while True:
+            await asyncio.sleep(WATCH_INTERVAL)
+            cnt = await get_request_count(peer_id, link)
+            if cnt >= 1:
+                try:
+                    await revoke_invite(tier_key, link)
+                    await decline_all_pending(peer_id, link)
+                    log_action("invite_revoked_on_request", {
+                        "tier": tier_key, "peer": peer_id, "link": link, "req_count": cnt, "target": target_id
+                    })
+                except Exception as e:
+                    log_action("revoke_on_request_err", {"tier": tier_key, "peer": peer_id, "link": link, "err": str(e)})
+                break
+    finally:
+        INVITE_WATCHERS.pop(key, None)
+
 
 async def send_invite_to_user(user_id: int, tier: str, link: str):
     t = (tier or "").lower()
@@ -241,6 +315,7 @@ async def send_invite_to_user(user_id: int, tier: str, link: str):
     tier_label = f"VIP{n}" if n.isdigit() else "VIP"
     msg = INVITE_TPL.format(tier=tier_label, link=link)
     await client.send_message(user_id, msg, silent=SILENT_DM)
+
 
 async def capture_note_from_reply(event, title: str, caption_override: Optional[str]) -> Optional[dict]:
     r = await event.get_reply_message()
@@ -269,6 +344,7 @@ async def capture_note_from_reply(event, title: str, caption_override: Optional[
     if caption_text:
         return {"type": "text", "text": caption_text}
     return None
+
 
 @client.on(events.NewMessage(from_users=list(ADMIN_IDS)))
 async def admin_handler(event: events.NewMessage.Event):
@@ -300,10 +376,11 @@ async def admin_handler(event: events.NewMessage.Event):
             return
         await send_invite_to_user(target, link_cmd, link)
         log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
-        ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
+        ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link, "peer": tier_peer_id(link_cmd)}
         peer_id = tier_peer_id(link_cmd)
         if peer_id:
             ACTIVE_INVITES_BY_CHAT.setdefault(peer_id, {})[link] = target
+            asyncio.create_task(watch_and_revoke_on_first_request(link_cmd, peer_id, link, target))
         return
 
     if text.startswith(("/addv1", "/addv2", "/addv3", "/addv4", "/addv5", "/addv6", ".addv1", ".addv2", ".addv3", ".addv4", ".addv5", ".addv6")):
@@ -331,8 +408,10 @@ async def admin_handler(event: events.NewMessage.Event):
         if req_no is not None:
             lp["req_no"] = req_no
         log_action("relay_addv", lp)
+
         if COMBO_ON:
             link_cmd = addv_to_link_cmd(relay_cmd_token)
+
             async def make_and_send():
                 try:
                     if WAIT_BOT_REPLY > 0:
@@ -361,12 +440,14 @@ async def admin_handler(event: events.NewMessage.Event):
                     if req_no is not None:
                         inv_log["req_no"] = req_no
                     log_action("invite_sent", inv_log)
-                    ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
+                    ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link, "peer": tier_peer_id(link_cmd)}
                     peer_id = tier_peer_id(link_cmd)
                     if peer_id:
                         ACTIVE_INVITES_BY_CHAT.setdefault(peer_id, {})[link] = target
+                        asyncio.create_task(watch_and_revoke_on_first_request(link_cmd, peer_id, link, target))
                 except Exception as e:
                     log_action("invite_dm_failed", {"tier": link_cmd, "target": target, "err": str(e)})
+
             if COMBO_ORDER == "relay_first":
                 await make_and_send()
             else:
@@ -489,7 +570,7 @@ async def admin_handler(event: events.NewMessage.Event):
             "  .addv4  [reply user] → /addv4 <user_id>\n"
             "  .addv5  [reply user] → /addv5 <user_id>\n"
             "  .addv6  [reply user] → /addv6 <user_id>\n\n"
-            "LINK (DM link join-request, TTL 24 jam, 1x pakai via auto-revoke):\n"
+            "LINK (DM link join-request, TTL 24 jam, auto-revoke pada request pertama dan saat ACC):\n"
             "  .linkv1  [reply user]\n"
             "  .linkv2  [reply user]\n"
             "  .linkv3  [reply user]\n"
@@ -506,6 +587,7 @@ async def admin_handler(event: events.NewMessage.Event):
         log_action("show_help", {"from": event.sender_id})
         return
 
+
 @client.on(events.ChatAction)
 async def on_chat_action(event: events.ChatAction.Event):
     if not (event.user_joined or event.user_added):
@@ -519,10 +601,13 @@ async def on_chat_action(event: events.ChatAction.Event):
         peer_id = event.chat_id
     except Exception:
         peer_id = None
+
     rec = ACTIVE_INVITES.pop(uid, None)
     if rec:
         try:
             await revoke_invite(rec["tier"], rec["link"])
+            if rec.get("peer"):
+                await decline_all_pending(rec["peer"], rec["link"])
             log_action("invite_consumed", {"tier": rec["tier"], "target": uid, "link": rec["link"]})
         except Exception as e:
             log_action("invite_consume_err", {"tier": rec["tier"], "target": uid, "err": str(e)})
@@ -530,6 +615,7 @@ async def on_chat_action(event: events.ChatAction.Event):
         if p:
             ACTIVE_INVITES_BY_CHAT.get(p, {}).pop(rec["link"], None)
         return
+
     if peer_id and peer_id in ACTIVE_INVITES_BY_CHAT and ACTIVE_INVITES_BY_CHAT[peer_id]:
         link_to_revoke, target_id = next(reversed(ACTIVE_INVITES_BY_CHAT[peer_id].items()))
         tier_key = None
@@ -551,6 +637,7 @@ async def on_chat_action(event: events.ChatAction.Event):
         if tier_key:
             try:
                 await revoke_invite(tier_key, link_to_revoke)
+                await decline_all_pending(peer_id, link_to_revoke)
                 log_action("invite_consumed_fallback", {"tier": tier_key, "target": uid, "link": link_to_revoke})
             except Exception as e:
                 log_action("invite_consume_err_fallback", {"tier": tier_key, "target": uid, "err": str(e)})
@@ -560,6 +647,7 @@ async def on_chat_action(event: events.ChatAction.Event):
                 ACTIVE_INVITES.pop(tid, None)
                 break
 
+
 async def main():
     if PREFER_STRING and not STRING_SESSION:
         await interactive_login_and_persist_string()
@@ -567,6 +655,7 @@ async def main():
         await client.connect()
     print("UsherBot started.")
     await client.run_until_disconnected()
+
 
 if __name__ == "__main__":
     with client:
