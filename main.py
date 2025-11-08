@@ -6,20 +6,13 @@ import logging
 import shutil
 from typing import Optional
 from datetime import datetime, timezone
-
 from telethon import TelegramClient, events, functions
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 
-# ===================== LOGGING =====================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("usher")
 
-# ===================== CONFIG IO =====================
 CFG_PATH = "config.json"
 
 def load_cfg() -> dict:
@@ -34,22 +27,19 @@ def save_cfg(cfg: dict):
 
 CFG = load_cfg()
 
-# --- Telegram credentials & client mode ---
 API_ID = int(CFG["telegram"]["api_id"])
 API_HASH = CFG["telegram"]["api_hash"]
 SESSION_FILE = CFG["telegram"]["session"]
 STRING_SESSION = (CFG["telegram"].get("string_session") or "").strip()
 PREFER_STRING = bool(CFG["telegram"].get("prefer_string_session", True))
 
-# --- Admin & target bot ---
 ADMIN_IDS = set(int(x) for x in CFG["admin"]["admin_ids"])
 BOT_USERNAME = CFG["bot_target"]["username"]
-CMD_MAP = CFG["bot_target"]["commands"]  # {"v1": "/addv1", ..., "v6": "/addv6"}
+CMD_MAP = CFG["bot_target"]["commands"]
 
-# --- Behavior ---
 BEHAV = CFG["behavior"]
 COMBO_ON = bool(BEHAV.get("combo_addv_plus_link", True))
-COMBO_ORDER = BEHAV.get("combo_order", "relay_first")  # relay_first | parallel
+COMBO_ORDER = BEHAV.get("combo_order", "relay_first")
 WAIT_BOT_REPLY = int(BEHAV.get("wait_bot_reply_sec", 5))
 SILENT_DM = bool(BEHAV.get("silent_dm_to_user", True))
 ADDV_MIN = int(BEHAV.get("addv_req_min", 1))
@@ -57,14 +47,12 @@ ADDV_MAX = int(BEHAV.get("addv_req_max", 100))
 NOTES_PREVIEW_LEN = int(BEHAV.get("notes_list_preview_len", 160))
 NOTES_LIST_MAX = int(BEHAV.get("notes_list_max_items", 50))
 
-# --- VIP invite config ---
 VIP = CFG["vip_invite"]
-VIP_MAP = VIP["map"]                      # {"linkv1": "-100...", ..., "linkv6": "-100..."}
-TTL = int(VIP.get("ttl_sec", 86400))      # 24 jam
-LIMIT = int(VIP.get("limit", 1))          # diabaikan saat join-request
+VIP_MAP = VIP["map"]
+TTL = int(VIP.get("ttl_sec", 86400))
+LIMIT = int(VIP.get("limit", 1))
 INVITE_TPL = VIP.get("template", "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}")
 
-# --- Storage ---
 STO = CFG["storage"]
 NOTES_PATH = STO["notes"]
 INVITE_LOG = STO["invite_log"]
@@ -73,19 +61,17 @@ os.makedirs("data", exist_ok=True)
 os.makedirs(os.path.dirname(NOTES_PATH), exist_ok=True)
 os.makedirs(os.path.dirname(INVITE_LOG), exist_ok=True)
 
-# ===================== CLIENT =====================
 def make_client() -> TelegramClient:
     if PREFER_STRING:
         if STRING_SESSION:
             return TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-        # first-run: create empty StringSession then interactive login
         return TelegramClient(StringSession(), API_ID, API_HASH)
     return TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
 client = make_client()
 
-# ===================== HELPERS =====================
-ACTIVE_INVITES = {}  # { user_id: {"tier": "linkvX", "link": "https://t.me/+..."} }
+ACTIVE_INVITES = {}
+ACTIVE_INVITES_BY_CHAT = {}
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -139,17 +125,14 @@ def clip_req(n: int) -> int:
     return n
 
 def addv_to_link_cmd(addv_cmd: str) -> str:
-    # "/addv1" -> "linkv1"
     base = addv_cmd.lstrip("/")
-    return "link" + base[-2:]  # aman untuk 1..6
+    return "link" + base[-2:]
 
 async def get_target_user_from_context(event: events.NewMessage.Event) -> Optional[int]:
-    # Prioritas: reply user
     if event.is_reply:
         r = await event.get_reply_message()
         if r and r.sender_id and not r.is_channel:
             return r.sender_id
-    # Alternatif: argumen kedua
     parts = event.raw_text.strip().split()
     if len(parts) >= 2:
         tok = parts[1].strip()
@@ -179,7 +162,6 @@ def parse_req_no_or_none(text_raw: str, consumed_first_arg: bool) -> Optional[in
         start += 1
     return None
 
-# ===================== LOGIN (STRING SESSION) =====================
 async def interactive_login_and_persist_string():
     await client.connect()
     if await client.is_user_authorized():
@@ -201,9 +183,7 @@ async def interactive_login_and_persist_string():
     save_cfg(CFG)
     print("\n=== STRING SESSION ===\n" + s + "\n======================\n")
 
-# ===================== INVITE CORE =====================
 async def ensure_entity_cached(peer_id: int):
-    # Bantu Telethon mengenali entity jika session baru
     try:
         await client.get_entity(peer_id)
     except Exception:
@@ -212,28 +192,25 @@ async def ensure_entity_cached(peer_id: int):
         except Exception as e:
             log_action("entity_cache_error", {"peer": peer_id, "err": str(e)})
 
+def tier_peer_id(tier_key: str) -> Optional[int]:
+    try:
+        return int(str(VIP_MAP[tier_key]).strip())
+    except Exception:
+        return None
+
 async def create_invite(link_cmd: str, require_approval: bool = True) -> Optional[str]:
     peer_cfg = VIP_MAP.get(link_cmd)
     if not peer_cfg:
         log_action("invite_error", {"tier": link_cmd, "err": "peer_not_configured"})
         return None
     try:
-        peer_id = int(str(peer_cfg).strip())  # "-100xxxxxxxxxx"
+        peer_id = int(str(peer_cfg).strip())
         expire = int(time.time()) + TTL
-
         await ensure_entity_cached(peer_id)
-
-        kwargs = dict(
-            peer=peer_id,
-            expire_date=expire,
-            request_needed=require_approval
-        )
-        # usage_limit tidak valid bila request_needed=True
+        kwargs = dict(peer=peer_id, expire_date=expire, request_needed=require_approval)
         if not require_approval:
             kwargs["usage_limit"] = LIMIT
-
         res = await client(functions.messages.ExportChatInviteRequest(**kwargs))
-
         link = getattr(res, "link", None)
         if not link and hasattr(res, "exported_invite"):
             link = getattr(res.exported_invite, "link", None)
@@ -248,11 +225,7 @@ async def create_invite(link_cmd: str, require_approval: bool = True) -> Optiona
 async def revoke_invite(peer_key: str, link: str):
     try:
         peer_id = int(str(VIP_MAP[peer_key]).strip())
-        await client(functions.messages.EditExportedChatInviteRequest(
-            peer=peer_id,
-            link=link,
-            revoked=True
-        ))
+        await client(functions.messages.EditExportedChatInviteRequest(peer=peer_id, link=link, revoked=True))
         log_action("invite_revoked", {"tier": peer_key, "link": link})
     except Exception as e:
         log_action("revoke_err", {"tier": peer_key, "err": str(e)})
@@ -269,7 +242,34 @@ async def send_invite_to_user(user_id: int, tier: str, link: str):
     msg = INVITE_TPL.format(tier=tier_label, link=link)
     await client.send_message(user_id, msg, silent=SILENT_DM)
 
-# ===================== ADMIN COMMANDS =====================
+async def capture_note_from_reply(event, title: str, caption_override: Optional[str]) -> Optional[dict]:
+    r = await event.get_reply_message()
+    if not r:
+        return None
+    media = None
+    media_type = None
+    caption_text = (caption_override or r.message or "").strip()
+    if r.photo:
+        media = r.photo
+        media_type = "photo"
+    elif r.document and not r.video:
+        media = r.document
+        media_type = "document"
+    elif r.video:
+        media = r.video
+        media_type = "video"
+    if media:
+        d = notes_media_dir(title)
+        if os.path.exists(d):
+            shutil.rmtree(d)
+        os.makedirs(d, exist_ok=True)
+        path = await client.download_media(media, file=d)
+        size = os.path.getsize(path) if os.path.exists(path) else None
+        return {"type": media_type, "text": caption_text, "media": {"path": path, "size": size}}
+    if caption_text:
+        return {"type": "text", "text": caption_text}
+    return None
+
 @client.on(events.NewMessage(from_users=list(ADMIN_IDS)))
 async def admin_handler(event: events.NewMessage.Event):
     text_raw = event.raw_text.strip()
@@ -277,31 +277,39 @@ async def admin_handler(event: events.NewMessage.Event):
         return
     text = text_raw.lower()
 
-    # ---------- .linkv1..linkv6 (join-request) ----------
     if text_raw.startswith((".linkv1", ".linkv2", ".linkv3", ".linkv4", ".linkv5", ".linkv6")):
-        link_cmd = text_raw.split()[0].lstrip("/.!").lower()  # 'linkv1'..'linkv6'
+        link_cmd = text_raw.split()[0].lstrip("/.!").lower()
         target = await get_target_user_from_context(event)
         if not target:
             log_action("link_ignored", {"reason": "no_target", "cmd": link_cmd, "raw": event.raw_text})
             return
-
+        old = ACTIVE_INVITES.get(target)
+        if old:
+            old_peer = tier_peer_id(old["tier"])
+            if old_peer:
+                try:
+                    await revoke_invite(old["tier"], old["link"])
+                    ACTIVE_INVITES.pop(target, None)
+                    ACTIVE_INVITES_BY_CHAT.get(old_peer, {}).pop(old["link"], None)
+                    log_action("invite_revoked_old_for_target", {"tier": old["tier"], "target": target, "link": old["link"]})
+                except Exception as e:
+                    log_action("revoke_old_err", {"tier": old["tier"], "target": target, "err": str(e)})
         link = await create_invite(link_cmd, True)
         if not link:
             log_action("link_error", {"tier": link_cmd, "target": target, "err": "create_invite_failed"})
             return
-
         await send_invite_to_user(target, link_cmd, link)
         log_action("invite_sent_manual", {"tier": link_cmd, "target": target, "link": link})
         ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
+        peer_id = tier_peer_id(link_cmd)
+        if peer_id:
+            ACTIVE_INVITES_BY_CHAT.setdefault(peer_id, {})[link] = target
         return
 
-    # ---------- .addv1..6 atau /addv1..6 (relay ke bot utama + DM link) ----------
-    if text.startswith(("/addv1", "/addv2", "/addv3", "/addv4", "/addv5", "/addv6",
-                        ".addv1", ".addv2", ".addv3", ".addv4", ".addv5", ".addv6")):
-        input_cmd = text.split()[0]                      # '.addvX' atau '/addvX'
-        relay_cmd_token = input_cmd.replace(".", "/")    # selalu relay ke bot utama /addvX
+    if text.startswith(("/addv1", "/addv2", "/addv3", "/addv4", "/addv5", "/addv6", ".addv1", ".addv2", ".addv3", ".addv4", ".addv5", ".addv6")):
+        input_cmd = text.split()[0]
+        relay_cmd_token = input_cmd.replace(".", "/")
         target = await get_target_user_from_context(event)
-
         consumed_first_arg = False
         if not event.is_reply:
             parts = text_raw.split()
@@ -309,31 +317,22 @@ async def admin_handler(event: events.NewMessage.Event):
                 a1 = parts[1]
                 if a1.startswith("@") or extract_int_token(a1) is not None:
                     consumed_first_arg = True
-
         if not target:
             log_action("ignored_addv", {"reason": "no_target", "tier": relay_cmd_token.lstrip("/"), "raw": text_raw})
             return
-
-        # Hanya .addv1 yang menerima request_no (1–100)
         req_no = None
         if relay_cmd_token.endswith("1"):
             req_no = parse_req_no_or_none(text_raw, consumed_first_arg)
-
-        tier_key = f"v{relay_cmd_token[-1]}"                 # 'v1'..'v6'
-        relay_cmd = CMD_MAP.get(tier_key, relay_cmd_token)    # map -> '/addvX'
-
+        tier_key = f"v{relay_cmd_token[-1]}"
+        relay_cmd = CMD_MAP.get(tier_key, relay_cmd_token)
         payload = f"{relay_cmd} {target}" if req_no is None else f"{relay_cmd} {target} {req_no}"
         await client.send_message(BOT_USERNAME, payload)
-
         lp = {"tier": tier_key, "target": target, "to": BOT_USERNAME}
         if req_no is not None:
             lp["req_no"] = req_no
         log_action("relay_addv", lp)
-
-        # DM link setelah relay
         if COMBO_ON:
-            link_cmd = addv_to_link_cmd(relay_cmd_token)  # 'linkvX'
-
+            link_cmd = addv_to_link_cmd(relay_cmd_token)
             async def make_and_send():
                 try:
                     if WAIT_BOT_REPLY > 0:
@@ -342,28 +341,38 @@ async def admin_handler(event: events.NewMessage.Event):
                             await client.wait_for(events.NewMessage(from_users=bot_ent.id), timeout=WAIT_BOT_REPLY)
                         except Exception:
                             pass
-
                     await asyncio.sleep(5)
+                    old = ACTIVE_INVITES.get(target)
+                    if old:
+                        old_peer = tier_peer_id(old["tier"])
+                        if old_peer:
+                            try:
+                                await revoke_invite(old["tier"], old["link"])
+                                ACTIVE_INVITES.pop(target, None)
+                                ACTIVE_INVITES_BY_CHAT.get(old_peer, {}).pop(old["link"], None)
+                                log_action("invite_revoked_old_for_target", {"tier": old["tier"], "target": target, "link": old["link"]})
+                            except Exception as e:
+                                log_action("revoke_old_err", {"tier": old["tier"], "target": target, "err": str(e)})
                     link = await create_invite(link_cmd, True)
                     if not link:
                         raise RuntimeError("create_invite_failed")
-
                     await send_invite_to_user(target, link_cmd, link)
                     inv_log = {"tier": link_cmd, "target": target, "link": link, "status": "pending"}
                     if req_no is not None:
                         inv_log["req_no"] = req_no
                     log_action("invite_sent", inv_log)
                     ACTIVE_INVITES[target] = {"tier": link_cmd, "link": link}
+                    peer_id = tier_peer_id(link_cmd)
+                    if peer_id:
+                        ACTIVE_INVITES_BY_CHAT.setdefault(peer_id, {})[link] = target
                 except Exception as e:
                     log_action("invite_dm_failed", {"tier": link_cmd, "target": target, "err": str(e)})
-
             if COMBO_ORDER == "relay_first":
                 await make_and_send()
             else:
                 asyncio.create_task(make_and_send())
         return
 
-    # ---------- NOTES ----------
     if text.startswith("/savenote"):
         parts = text_raw.split(maxsplit=1)
         if len(parts) < 2 and not event.is_reply:
@@ -375,17 +384,14 @@ async def admin_handler(event: events.NewMessage.Event):
         else:
             title, cap = (tail.strip() or "untitled"), None
         title_key = sanitize_title(title)
-
         note = None
         if event.is_reply:
             note = await capture_note_from_reply(event, title_key, cap)
         elif cap:
             note = {"type": "text", "text": cap}
-
         if not note:
             await event.reply("Pesan tidak mengandung konten yang bisa disimpan.")
             return
-
         notes = load_notes()
         notes[title_key] = note
         save_notes(notes)
@@ -465,12 +471,7 @@ async def admin_handler(event: events.NewMessage.Event):
                 media = note.get("media") or {}
                 path = media.get("path")
                 if path and os.path.exists(path):
-                    await client.send_file(
-                        target_id,
-                        path,
-                        caption=note.get("text", "") or "",
-                        force_document=(note["type"] == "document"),
-                    )
+                    await client.send_file(target_id, path, caption=note.get("text", "") or "", force_document=(note["type"] == "document"))
                 else:
                     await client.send_message(target_id, note.get("text", "") or "")
             log_action("note_get_sent", {"title": title_key, "type": note["type"], "target": target_id})
@@ -478,29 +479,23 @@ async def admin_handler(event: events.NewMessage.Event):
             log_action("note_get_send_error", {"title": title_key, "err": str(e)})
         return
 
-    # ---------- /help ----------
     if text.startswith("/help"):
         help_text = (
-            "Panduan Perintah Usher Bot\n"
-            "\n"
+            "Panduan Perintah Usher Bot\n\n"
             "ADD (relay ke Bot Utama):\n"
-            "  .addv1  [reply user] [opsional: <request_no 1-100>]\n"
-            "    - Contoh: reply ke user lalu kirim: .addv1 7\n"
-            "    - Relay: /addv1 <user_id> 7\n"
-            "  .addv2  [reply user] (tanpa request_no)  → /addv2 <user_id>\n"
-            "  .addv3  [reply user] (tanpa request_no)  → /addv3 <user_id>\n"
-            "  .addv4  [reply user] (tanpa request_no)  → /addv4 <user_id>\n"
-            "  .addv5  [reply user] (tanpa request_no)  → /addv5 <user_id>\n"
-            "  .addv6  [reply user] (tanpa request_no)  → /addv6 <user_id>\n"
-            "\n"
+            "  .addv1  [reply user] [opsional: <request_no 1-100>] → /addv1 <user_id> [no]\n"
+            "  .addv2  [reply user] → /addv2 <user_id>\n"
+            "  .addv3  [reply user] → /addv3 <user_id>\n"
+            "  .addv4  [reply user] → /addv4 <user_id>\n"
+            "  .addv5  [reply user] → /addv5 <user_id>\n"
+            "  .addv6  [reply user] → /addv6 <user_id>\n\n"
             "LINK (DM link join-request, TTL 24 jam, 1x pakai via auto-revoke):\n"
             "  .linkv1  [reply user]\n"
             "  .linkv2  [reply user]\n"
             "  .linkv3  [reply user]\n"
             "  .linkv4  [reply user]\n"
             "  .linkv5  [reply user]\n"
-            "  .linkv6  [reply user]\n"
-            "\n"
+            "  .linkv6  [reply user]\n\n"
             "NOTES:\n"
             "  /savenote <judul> | <isi>    atau reply konten lalu: /savenote <judul>\n"
             "  /delnote <judul>\n"
@@ -511,7 +506,6 @@ async def admin_handler(event: events.NewMessage.Event):
         log_action("show_help", {"from": event.sender_id})
         return
 
-# ===================== AUTO-REVOKE (1x pakai) =====================
 @client.on(events.ChatAction)
 async def on_chat_action(event: events.ChatAction.Event):
     if not (event.user_joined or event.user_added):
@@ -521,7 +515,10 @@ async def on_chat_action(event: events.ChatAction.Event):
         uid = user.id
     except Exception:
         return
-
+    try:
+        peer_id = event.chat_id
+    except Exception:
+        peer_id = None
     rec = ACTIVE_INVITES.pop(uid, None)
     if rec:
         try:
@@ -529,35 +526,40 @@ async def on_chat_action(event: events.ChatAction.Event):
             log_action("invite_consumed", {"tier": rec["tier"], "target": uid, "link": rec["link"]})
         except Exception as e:
             log_action("invite_consume_err", {"tier": rec["tier"], "target": uid, "err": str(e)})
+        p = tier_peer_id(rec["tier"])
+        if p:
+            ACTIVE_INVITES_BY_CHAT.get(p, {}).pop(rec["link"], None)
         return
-
-    # Fallback kalau bot restart: scan log terakhir
-    try:
-        if not os.path.exists(INVITE_LOG):
-            return
-        with open(INVITE_LOG, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        link = None
-        tier = None
-        for line in reversed(lines):
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            if d.get("action") in ("invite_sent", "invite_sent_manual") and int(d.get("target", 0)) == uid:
-                link = d.get("link")
-                tier = d.get("tier")
+    if peer_id and peer_id in ACTIVE_INVITES_BY_CHAT and ACTIVE_INVITES_BY_CHAT[peer_id]:
+        link_to_revoke, target_id = next(reversed(ACTIVE_INVITES_BY_CHAT[peer_id].items()))
+        tier_key = None
+        for tid, info in ACTIVE_INVITES.items():
+            if info.get("link") == link_to_revoke:
+                tier_key = info.get("tier")
                 break
-        if link and tier:
+        if not tier_key:
             try:
-                await revoke_invite(tier, link)
-                log_action("invite_consumed", {"tier": tier, "target": uid, "link": link})
+                with open(INVITE_LOG, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                for line in reversed(lines):
+                    d = json.loads(line)
+                    if d.get("link") == link_to_revoke:
+                        tier_key = d.get("tier")
+                        break
+            except Exception:
+                pass
+        if tier_key:
+            try:
+                await revoke_invite(tier_key, link_to_revoke)
+                log_action("invite_consumed_fallback", {"tier": tier_key, "target": uid, "link": link_to_revoke})
             except Exception as e:
-                log_action("invite_consume_err", {"tier": tier, "target": uid, "err": str(e)})
-    except Exception:
-        pass
+                log_action("invite_consume_err_fallback", {"tier": tier_key, "target": uid, "err": str(e)})
+        ACTIVE_INVITES_BY_CHAT[peer_id].pop(link_to_revoke, None)
+        for tid in list(ACTIVE_INVITES.keys()):
+            if ACTIVE_INVITES[tid].get("link") == link_to_revoke:
+                ACTIVE_INVITES.pop(tid, None)
+                break
 
-# ===================== STARTUP =====================
 async def main():
     if PREFER_STRING and not STRING_SESSION:
         await interactive_login_and_persist_string()
