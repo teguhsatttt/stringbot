@@ -1,18 +1,18 @@
 {
   "telegram": {
-    "api_id": 1234567,
-    "api_hash": "YOUR_API_HASH",
-    "session": "data/usher.session",
-    "string_session": "",
+    "api_id": 1111111,
+    "api_hash": "11111111",
+    "session": "usher_session",
+    "string_session": "1111111111" ,
     "prefer_string_session": true
   },
   "admin": {
     "admin_ids": [
-      111111111
+      1234567890
     ]
   },
   "bot_target": {
-    "username": "YourBot",
+    "username": "xyztgenerate_bot",
     "commands": {
       "v1": "/addv1",
       "v2": "/addv2",
@@ -27,22 +27,22 @@
     "notify_admin_on_relay": false,
     "silent_dm_to_user": true
   },
-  ,"vip_invite": {
-  "map": {
-    "linkv1": "-1003021502159",
-    "linkv2": "-1001234567890",
-    "linkv3": "-1009876543210",
-    "linkv4": "-1001112223334",
-    "linkv5": "-1005556667778",
-    "linkv6": "-1008889990001"
+  "vip_invite": {
+    "map": {
+      "linkv1": "-100**********",
+      "linkv2": "-100**********",
+      "linkv3": "-100**********",
+      "linkv4": "-100**********",
+      "linkv5": "-100**********",
+      "linkv6": "-100**********"
+    },
+    "ttl_sec": 86400,
+    "limit": 1,
+    "template": "Akses {tier} aktif.\\Link (berlaku 24 jam, 1x pakai): {link}"
   },
-  "ttl_sec": 86400,
-  "limit": 1,
-  "template": "Akses {tier} aktif.\nLink (berlaku 24 jam, 1x pakai): {link}"
-},
   "storage": {
     "notes": "data/notes.json",
-    "invite_log": "data/invite_audit.jsonl"
+    "invite_log": "data/invite_audit.json"
   },
   "timezone": "Asia/Jakarta"
 }
