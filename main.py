@@ -383,7 +383,7 @@ async def admin_handler(event: events.NewMessage.Event):
             asyncio.create_task(watch_and_revoke_on_first_request(link_cmd, peer_id, link, target))
         return
 
-    if text.startswith(("/addv1", "/addv2", "/addv3", "/addv4", "/addv5", "/addv6", ".addv1", ".addv2", ".addv3", ".addv4", ".addv5", ".addv6")):
+    if text.startswith((".addv1", ".addv2", ".addv3", ".addv4", ".addv5", ".addv6")):
         input_cmd = text.split()[0]
         relay_cmd_token = input_cmd.replace(".", "/")
         target = await get_target_user_from_context(event)
